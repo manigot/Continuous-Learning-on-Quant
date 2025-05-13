@@ -3,16 +3,16 @@ import pandas as pd
 
 from typing import Dict, List, Tuple
 
-from empyrical import (
-    sharpe_ratio,
-    calmar_ratio,
-    sortino_ratio,
-    max_drawdown,
-    downside_risk,
-    annual_return,
-    annual_volatility,
-    # cum_returns,
-)
+# from empyrical import (
+#     sharpe_ratio,
+#     calmar_ratio,
+#     sortino_ratio,
+#     max_drawdown,
+#     downside_risk,
+#     annual_return,
+#     annual_volatility,
+#     # cum_returns,
+# )
 
 VOL_LOOKBACK = 60  # for ex-ante volatility
 VOL_TARGET = 0.15  # 15% volatility target

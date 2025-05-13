@@ -1,5 +1,4 @@
 import argparse
-import datetime as dt
 from typing import List
 
 import pandas as pd
@@ -25,7 +24,7 @@ def main(
     # 티커(또는 심볼)별 기본 모멘텀 피처 생성
     features = pd.concat(
         [
-            deep_momentum_strategy_features(
+            deep_momentum_strategy_features_crypto(
                 pull_binance_sample_data_ft(symbol)
             ).assign(
                 symbol=symbol
@@ -45,28 +44,28 @@ def main(
         if extra_lbw:
             for extra in extra_lbw:
                 extra_data = pd.read_csv(
-                    output_file_path.replace( # TODO file update
-                        f"quandl_cpd_{lookback_window_length}lbw.csv",
-                        f"quandl_cpd_{extra}lbw.csv",
+                    output_file_path.replace(
+                        f"binance_cpd_{lookback_window_length}lbw.csv",
+                        f"binance_cpd_{extra}lbw.csv",
                     ),
                     index_col=0,
                     parse_dates=True,
-                ).reset_index()[ # TODO folder update
-                    ["date", "ticker", f"cp_rl_{extra}", f"cp_score_{extra}"]
+                ).reset_index()[
+                    ["Time", "symbol", f"cp_rl_{extra}", f"cp_score_{extra}"]
                 ]
-                extra_data["date"] = pd.to_datetime(extra_data["date"]) # TODO not date
+                extra_data["Time"] = pd.to_datetime(extra_data["Time"])
 
                 # 기존 피처에 추가 LBW CPD 피처 병합
                 features_w_cpd = pd.merge(
-                    features_w_cpd.set_index(["date", "ticker"]),
-                    extra_data.set_index(["date", "ticker"]),
+                    features_w_cpd.set_index(["Time", "symbol"]),
+                    extra_data.set_index(["Time", "symbol"]),
                     left_index=True,
                     right_index=True,
                 ).reset_index()
-                features_w_cpd.index = features_w_cpd["date"]
-                features_w_cpd.index.name = "Date"
+                features_w_cpd.index = features_w_cpd["Time"]
+                features_w_cpd.index.name = "Time"
         else:
-            features_w_cpd.index.name = "Date"
+            features_w_cpd.index.name = "Time"
         # 최종 파일 저장
         features_w_cpd.to_csv(output_file_path)
     else:
