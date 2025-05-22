@@ -4,7 +4,7 @@ import pathlib
 import shutil
 import copy
 
-from keras_tuner.tuners.randomsearch import RandomSearch
+from keras_tuner import RandomSearch
 from abc import ABC, abstractmethod
 
 from tensorflow import keras
@@ -71,7 +71,7 @@ class SharpeValidationLoss(keras.callbacks.Callback):
         self.num_time = num_time
         self.min_delta = min_delta
 
-        self.best_sharpe = np.NINF  # since calculating positive Sharpe...
+        self.best_sharpe = -np.inf  # since calculating positive Sharpe...
         # self.best_weights = None
         self.weights_save_location = weights_save_location
         # self.verbose = verbose
@@ -82,7 +82,7 @@ class SharpeValidationLoss(keras.callbacks.Callback):
     def on_train_begin(self, logs=None):
         self.patience_counter = 0
         self.stopped_epoch = 0
-        self.best_sharpe = np.NINF
+        self.best_sharpe = -np.inf
 
     def on_epoch_end(self, epoch, logs=None):
         positions = self.model.predict(
@@ -151,7 +151,7 @@ class TunerValidationLoss(kt.tuners.RandomSearch):
         kwargs["batch_size"] = trial.hyperparameters.Choice(
             "batch_size", values=self.hp_minibatch_size
         )
-        super(TunerValidationLoss, self).run_trial(trial, *args, **kwargs)
+        super(TunerValidationLoss, self).run_trial(trial, **kwargs)
 
 
 class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
@@ -165,8 +165,11 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
         hyperparameters=None,
         tune_new_entries=True,
         allow_new_entries=True,
+        max_retries_per_trial=0,
+        max_consecutive_failed_trials=3,
         **kwargs,
     ):
+        self._reported_step = 0
         self.hp_minibatch_size = hp_minibatch_size
         super().__init__(
             hypermodel,
@@ -176,6 +179,8 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
             hyperparameters,
             tune_new_entries,
             allow_new_entries,
+            max_retries_per_trial=0,
+            max_consecutive_failed_trials=3,
             **kwargs,
         )
 
@@ -189,7 +194,7 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
         for callback in original_callbacks:
             if isinstance(callback, SharpeValidationLoss):
                 callback.set_weights_save_loc(
-                    self._get_checkpoint_fname(trial.trial_id, self._reported_step)
+                    self._get_checkpoint_fname(trial.trial_id)
                 )
 
         # Run the training process multiple times.
@@ -198,12 +203,13 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
             copied_fit_kwargs = copy.copy(kwargs)
             callbacks = self._deepcopy_callbacks(original_callbacks)
             self._configure_tensorboard_dir(callbacks, trial, execution)
-            callbacks.append(kt.engine.tuner_utils.TunerCallback(self, trial))
+            # callbacks.append(callbacks.append(TunerCallback(self, trial)))
             # Only checkpoint the best epoch across all executions.
             # callbacks.append(model_checkpoint)
             copied_fit_kwargs["callbacks"] = callbacks
 
-            history = self._build_and_fit_model(trial, args, copied_fit_kwargs)
+            print(f"type checking: args_{args} // ")
+            history = self._build_and_fit_model(trial, {}, copied_fit_kwargs)
             for metric, epoch_values in history.history.items():
                 if self.oracle.objective.direction == "min":
                     best_value = np.min(epoch_values)
@@ -536,7 +542,7 @@ class LstmDeepMomentumNetworkModel(DeepMomentumNetworkModel):
 
         model = keras.Model(inputs=input, outputs=output)
 
-        adam = keras.optimizers.Adam(lr=learning_rate, clipnorm=max_gradient_norm)
+        adam = keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=max_gradient_norm)
 
         sharpe_loss = SharpeLoss(self.output_size).call
 

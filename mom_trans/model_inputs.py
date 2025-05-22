@@ -71,12 +71,12 @@ class ModelFeatures:
         self,
         df,
         total_time_steps,
-        start_boundary=1990,
-        test_boundary=2020,
-        test_end=2021,
+        start_boundary=2018,
+        test_boundary=2022,
+        test_end=2022,
         changepoint_lbws=None,
         train_valid_sliding=False,
-        # add_buffer_years_to_test=1,  # TODO FIX THIS!!!!
+        # add_buffer_times_to_test=1,  # TODO FIX THIS!!!!
         transform_real_inputs=False,  # TODO remove this
         train_valid_ratio=0.9,
         split_tickers_individually=True,
@@ -86,24 +86,39 @@ class ModelFeatures:
         asset_class_dictionary=None,
         static_ticker_type_feature = False,
     ):
+        start_boundary = pd.to_datetime(dt.datetime(start_boundary, 1, 1)).tz_localize("UTC")
+        test_boundary  = pd.to_datetime(dt.datetime(test_boundary, 1, 1)).tz_localize("UTC")
+        test_end       = pd.to_datetime(dt.datetime(test_end, 1, 1)).tz_localize("UTC")
+
         """Initialises formatter. Splits data frame into training-validation-test data frames.
         This also calibrates scaling object, and transforms data for each split."""
         self._column_definition = [
-            ("ticker", DataTypes.CATEGORICAL, InputTypes.ID),
-            ("date", DataTypes.DATE, InputTypes.TIME),
-            ("target_returns", DataTypes.REAL_VALUED, InputTypes.TARGET),
-            ("norm_daily_return", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("norm_monthly_return", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("norm_quarterly_return", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("norm_biannual_return", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("norm_annual_return", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("macd_8_24", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("macd_16_48", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-            ("macd_32_96", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("symbol",          DataTypes.CATEGORICAL, InputTypes.ID),
+            ("Time",            DataTypes.DATE,        InputTypes.TIME),
+            ("RTg",             DataTypes.REAL_VALUED, InputTypes.TARGET),       # target_returns
+            ("MRt",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),  # raw returns
+            ("MVo",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),  # volatility
+            ("R15",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("R60",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("R4h",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("R1d",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("R1w",             DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("macd_4_16",       DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("macd_16_64",      DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("macd_32_128",     DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("minute",          DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("hour",            DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("day_of_week",     DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("month",           DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("sin_min",         DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("cos_min",         DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("sin_hour",        DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ("cos_hour",        DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
         ]
         df = df.dropna()
-        df = df[df["year"] >= start_boundary].copy()
-        years = df["year"]
+        print(df.columns)
+        df = df[df.index >= start_boundary].copy()
+        times = df.index
 
         self.identifiers = None
         self._real_scalers = None
@@ -132,14 +147,14 @@ class ModelFeatures:
             self._column_definition.append(
                 (f"day_of_month", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT)
             )
-            self._column_definition.append(
-                (f"week_of_year", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT)
-            )
+            # self._column_definition.append(
+            #     (f"week_of_year", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT)
+            # )
             # self._column_definition.append(
             #     (f"month_of_year", DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT)
             # )
 
-            # dataframe could have later years
+            # dataframe could have later times
             start_date = dt.datetime(start_boundary, 1, 1)
             days_from_start_max = (dt.datetime(test_end - 1, 12, 31) - start_date).days
             df["days_from_start"] = (df.index - start_date).days
@@ -156,18 +171,18 @@ class ModelFeatures:
             df["day_of_month"] = (
                 MinMaxScaler().fit_transform(df[["day_of_month"]].values).flatten()
             )
-            df["week_of_year"] = (
-                MinMaxScaler().fit_transform(df[["week_of_year"]].values).flatten()
-            )
+            # df["week_of_year"] = (
+            #     MinMaxScaler().fit_transform(df[["week_of_year"]].values).flatten()
+            # )
             # df["month_of_year"] = MinMaxScaler().fit_transform(df[["month_of_year"]].values).flatten()
 
         if add_ticker_as_static:
             self._column_definition.append(
                 (f"static_ticker", DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT)
             )
-            df["static_ticker"] = df["ticker"]
+            df["static_ticker"] = df["symbol"]
             if static_ticker_type_feature:
-                df["static_ticker_type"] = df["ticker"].map(
+                df["static_ticker_type"] = df["symbol"].map(
                     lambda t: asset_class_dictionary[t]
                 )
                 self._column_definition.append(
@@ -183,33 +198,39 @@ class ModelFeatures:
         # for static_variables
         # self._column_definition.append(("ticker", DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT))
 
-        test = df.loc[years >= test_boundary]
+        test = df.loc[times >= test_boundary]
 
         if split_tickers_individually:
-            trainvalid = df.loc[years < test_boundary]
+            trainvalid = df.loc[times < test_boundary]
             if lags:
                 tickers = (
-                    trainvalid.groupby("ticker")["ticker"].count()
+                    trainvalid.groupby("symbol")["symbol"].count()
                     * (1.0 - train_valid_ratio)
                 ) >= total_time_steps
                 tickers = tickers[tickers].index.tolist()
             else:
-                tickers = list(trainvalid.ticker.unique())
+                tickers = list(trainvalid.symbol.unique())
 
             train, valid = [], []
             for ticker in tickers:
-                calib_data = trainvalid[trainvalid.ticker == ticker]
+                calib_data = trainvalid[trainvalid.symbol == ticker]
                 T = len(calib_data)
                 train_valid_split = int(train_valid_ratio * T)
                 train.append(calib_data.iloc[:train_valid_split, :].copy())
                 valid.append(calib_data.iloc[train_valid_split:, :].copy())
+                print("t length ------" + str(len(train)))
+                print("v length ------" + str(len(valid)))
+
+            print("//////////////////")
+            print(train)
+            print("//////////////////")
 
             train = pd.concat(train)
             valid = pd.concat(valid)
 
-            test = test[test.ticker.isin(tickers)]
+            test = test[test.symbol.isin(tickers)]
         else:
-            trainvalid = df.loc[years < test_boundary]
+            trainvalid = df.loc[times < test_boundary]
             dates = np.sort(trainvalid.index.unique())
             split_index = int(train_valid_ratio * len(dates))
             train_dates = pd.DataFrame({"date": dates[:split_index]})
@@ -232,7 +253,7 @@ class ModelFeatures:
                     valid.groupby("ticker")["ticker"].count() > self.total_time_steps
                 )
                 tickers = tickers[tickers].index.tolist()
-                train = train[train.ticker.isin(tickers)]
+                train = train[train.symbol.isin(tickers)]
 
             else:
                 # at least one full training sequence
@@ -240,23 +261,23 @@ class ModelFeatures:
                 #     train.groupby("ticker")["ticker"].count() > self.total_time_steps
                 # )
                 # tickers = tickers[tickers].index.tolist()
-                tickers = list(train.ticker.unique())
-            valid = valid[valid.ticker.isin(tickers)]
-            test = test[test.ticker.isin(tickers)]
+                tickers = list(train.symbol.unique())
+            valid = valid[valid.symbol.isin(tickers)]
+            test = test[test.symbol.isin(tickers)]
 
         # don't think this is needed...
         if test_end:
-            # test = test[test["year"] < ((test_end + add_buffer_years_to_test))]
-            test = test[test["year"] < test_end]
+            # test = test[test["year"] < ((test_end + add_buffer_times_to_test))]
+            test = test[test.index < test_end]
 
         test_with_buffer = pd.concat(
             [
                 pd.concat(
                     [
-                        trainvalid[trainvalid.ticker == t].iloc[
+                        trainvalid[trainvalid.symbol == t].iloc[
                             -(self.total_time_steps - 1) :
                         ],  # TODO this
-                        test[test.ticker == t],
+                        test[test.symbol == t],
                     ]
                 ).sort_index()
                 for t in tickers
@@ -295,6 +316,7 @@ class ModelFeatures:
                 test_with_buffer, True, self.lags
             )
         else:
+            print(f"DEBUGGING : train: {train} \n DEBUGGING : valid{test} \n DEBUGGING test: {test}")
             self.train = self._batch_data(train, train_valid_sliding)
             self.valid = self._batch_data(valid, train_valid_sliding)
             self.test_fixed = self._batch_data(test, False)
@@ -479,6 +501,7 @@ class ModelFeatures:
         """
         # TODO this works but is a bit of a mess
         data = data.copy()
+        print(data)
         data["date"] = data.index.strftime("%Y-%m-%d")
 
         id_col = get_single_col_by_input_type(InputTypes.ID, self._column_definition)
@@ -578,7 +601,7 @@ class ModelFeatures:
                 active_entries = np.ones((arr.shape[0], arr.shape[1], arr.shape[2]))
                 for i in range(batch_size):
                     active_entries[i, sequence_lengths[i] :, :] = 0
-                sequence_lengths = np.array(sequence_lengths, dtype=np.int)
+                sequence_lengths = np.array(sequence_lengths, dtype=np.int32)
 
                 if "active_entries" not in data_map:
                     data_map["active_entries"] = [
@@ -612,9 +635,9 @@ class ModelFeatures:
         data_map["outputs"] = data_map["outputs"][: len(active_flags)]
         data_map["active_entries"] = active_flags
         data_map["identifier"] = data_map["identifier"][: len(active_flags)]
-        data_map["identifier"][data_map["identifier"] == 0] = ""
+        # data_map["identifier"][data_map["identifier"] == 0] = ""
         data_map["date"] = data_map["date"][: len(active_flags)]
-        data_map["date"][data_map["date"] == 0] = ""
+        # data_map["date"][data_map["date"] == 0] = ""
         return data_map
 
     def _batch_data_smaller_output(self, data, sliding_window, output_length):

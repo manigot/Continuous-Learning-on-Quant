@@ -70,7 +70,8 @@ def main(
         features_w_cpd.to_csv(output_file_path)
     else:
         # CPD 없이 기본 피처 저장
-        features.to_csv(output_file_path)
+        features = features.reset_index()
+        features.to_csv(output_file_path, index = False)
 
 
 if __name__ == "__main__":
