@@ -147,11 +147,13 @@ class TunerValidationLoss(kt.tuners.RandomSearch):
             **kwargs,
         )
 
-    def run_trial(self, trial, *args, **kwargs):
+    def run_trial(self, trial, **kwargs):
+        # set batch size from hyperparameters
         kwargs["batch_size"] = trial.hyperparameters.Choice(
             "batch_size", values=self.hp_minibatch_size
         )
-        super(TunerValidationLoss, self).run_trial(trial, **kwargs)
+        print(f"type checking: args_{kwargs} // {type(kwargs)} ")
+        return super().run_trial(trial, **kwargs)
 
 
 class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
@@ -184,46 +186,13 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
             **kwargs,
         )
 
-    def run_trial(self, trial, *args, **kwargs):
+    def run_trial(self, trial, **kwargs):
+        # set batch size from hyperparameters
         kwargs["batch_size"] = trial.hyperparameters.Choice(
             "batch_size", values=self.hp_minibatch_size
         )
-
-        original_callbacks = kwargs.pop("callbacks", [])
-
-        for callback in original_callbacks:
-            if isinstance(callback, SharpeValidationLoss):
-                callback.set_weights_save_loc(
-                    self._get_checkpoint_fname(trial.trial_id)
-                )
-
-        # Run the training process multiple times.
-        metrics = collections.defaultdict(list)
-        for execution in range(self.executions_per_trial):
-            copied_fit_kwargs = copy.copy(kwargs)
-            callbacks = self._deepcopy_callbacks(original_callbacks)
-            self._configure_tensorboard_dir(callbacks, trial, execution)
-            # callbacks.append(callbacks.append(TunerCallback(self, trial)))
-            # Only checkpoint the best epoch across all executions.
-            # callbacks.append(model_checkpoint)
-            copied_fit_kwargs["callbacks"] = callbacks
-
-            print(f"type checking: args_{args} // ")
-            history = self._build_and_fit_model(trial, {}, copied_fit_kwargs)
-            for metric, epoch_values in history.history.items():
-                if self.oracle.objective.direction == "min":
-                    best_value = np.min(epoch_values)
-                else:
-                    best_value = np.max(epoch_values)
-                metrics[metric].append(best_value)
-
-        # Average the results across executions and send to the Oracle.
-        averaged_metrics = {}
-        for metric, execution_values in metrics.items():
-            averaged_metrics[metric] = np.mean(execution_values)
-        self.oracle.update_trial(
-            trial.trial_id, metrics=averaged_metrics, step=self._reported_step
-        )
+        print(f"type checking: args_{kwargs} // {type(kwargs)} ")
+        return super().run_trial(trial, **kwargs)
 
 
 class DeepMomentumNetworkModel(ABC):
