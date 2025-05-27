@@ -3,16 +3,16 @@ import pandas as pd
 
 from typing import Dict, List, Tuple
 
-# from empyrical import (
-#     sharpe_ratio,
-#     calmar_ratio,
-#     sortino_ratio,
-#     max_drawdown,
-#     downside_risk,
-#     annual_return,
-#     annual_volatility,
-#     # cum_returns,
-# )
+from empyrical import (
+    sharpe_ratio,
+    calmar_ratio,
+    sortino_ratio,
+    max_drawdown,
+    downside_risk,
+    annual_return,
+    annual_volatility,
+    # cum_returns,
+)
 
 VOL_LOOKBACK = 60  # for ex-ante volatility
 VOL_TARGET = 0.15  # 15% volatility target
@@ -65,9 +65,10 @@ def calc_net_returns(data: pd.DataFrame, list_basis_points: List[float], identif
     cost = np.atleast_2d(list_basis_points) * 1e-4
 
     dfs = []
+    print(data.columns.tolist())
     for i in identifiers:
         data_slice = data[data["identifier"] == i].reset_index(drop=True)
-        annualised_vol = data_slice["daily_vol"]*np.sqrt(252)
+        annualised_vol = data_slice["MVo"]*np.sqrt(252)
         scaled_position = VOL_TARGET*data_slice["position"]/annualised_vol
         transaction_costs =  scaled_position.diff().abs().fillna(0.0).to_frame().to_numpy()* cost # TODO should probably fill first with initial cost
         net_captured_returns = data_slice[["captured_returns"]].to_numpy() - transaction_costs

@@ -373,10 +373,9 @@ def run_single_window(
     changepoint_lbws: List[int],
     skip_if_completed: bool = True,
     asset_class_dictionary: Dict[str, str] = None,
+    skip_hp_search: bool = False,
     hp_minibatch_size: List[int] = HP_MINIBATCH_SIZE,
 ):
-    print("D1 ------ RUNSINGLEWINDOW")
-    print(f"DEBUGGINGING ---- e_n: {experiment_name} // t_int: {train_interval}")
     """Backtest for a single test window
 
     Args:
@@ -427,6 +426,19 @@ def run_single_window(
 
     hp_directory = os.path.join(directory, "hp")
 
+    # ------------------------------------------------------------------
+    # If we already have hyper‑parameters from a previous run and the
+    # caller asked to skip the search, load them here and short‑circuit
+    # the Keras‑Tuner phase.
+    # ------------------------------------------------------------------
+    path_best_hp = os.path.join(directory, "best_hyperparameters.json")
+    use_cached_hp = skip_hp_search and os.path.exists(path_best_hp)
+
+    cached_hp: dict | None = None
+    if use_cached_hp:
+        with open(path_best_hp, "r") as fp:
+            cached_hp = json.load(fp)
+
     if params["architecture"] == "LSTM":
         dmn = LstmDeepMomentumNetworkModel(
             experiment_name,
@@ -453,9 +465,27 @@ def run_single_window(
         dmn = None
         raise Exception(f"{params['architecture']} is not a valid architecture.")
 
-    best_hp, best_model = dmn.hyperparameter_search(
-        model_features.train, model_features.valid
-    )
+    if cached_hp is not None:
+        # ── Re‑build the model with the stored hyper‑parameters ─────────
+        try:
+            best_model = dmn.build_model(cached_hp)   # DMN API
+        except AttributeError:
+            # Fallback for older API versions
+            best_model = dmn._build_model(cached_hp)  # noqa: SLF001
+
+        ckpt_path = os.path.join(directory, "best", "checkpoints",
+                                 "checkpoint.weights.h5")
+        if os.path.exists(ckpt_path):
+            best_model.load_weights(ckpt_path)
+
+        best_hp = cached_hp
+        print("✔  Re‑using previously tuned hyper‑parameters; "
+              "skipping hyper‑parameter search.")
+    else:
+        # ── Run the usual hyper‑parameter search ───────────────────────
+        best_hp, best_model = dmn.hyperparameter_search(
+            model_features.train, model_features.valid
+        )
     val_loss = dmn.evaluate(model_features.valid, best_model)
 
     print(f"Best validation loss = {val_loss}")
@@ -478,6 +508,7 @@ def run_single_window(
     )
     print(f"performance (sliding window) = {performance_sw}")
 
+    raw_data = raw_data.drop(columns=["Time"])
     results_sw = results_sw.merge(
         raw_data.reset_index()[["symbol", "Time", "MVo"]].rename(
             columns={"symbol": "identifier", "Time": "time"}
@@ -528,10 +559,9 @@ def run_single_window(
 
     # save model and get rid of the hp dir
     best_directory = os.path.join(directory, "best")
-    best_model.save_weights(os.path.join(best_directory, "checkpoints", "checkpoint"))
+    best_model.save_weights(os.path.join(best_directory, "checkpoints", "checkpoint.weights.h5"))
     with open(os.path.join(best_directory, "hyperparameters.json"), "w") as file:
         file.write(json.dumps(best_hp, indent=4))
-    shutil.rmtree(hp_directory)
 
     save_results(
         results_sw,
@@ -587,6 +617,7 @@ def run_all_windows(
             interval,
             params,
             changepoint_lbws,
+            skip_hp_search=True,
             asset_class_dictionary=asset_class_dictionary,
             hp_minibatch_size=hp_minibatch_size,
         )

@@ -58,7 +58,7 @@ class SharpeValidationLoss(keras.callbacks.Callback):
         num_time,  # including a count for nulls which will be indexed as 0
         early_stopping_patience,
         n_multiprocessing_workers,
-        weights_save_location="tmp/checkpoint",
+        weights_save_location="tmp/checkpoint.weights.h5",
         # verbose=0,
         min_delta=1e-4,
     ):
@@ -85,11 +85,7 @@ class SharpeValidationLoss(keras.callbacks.Callback):
         self.best_sharpe = -np.inf
 
     def on_epoch_end(self, epoch, logs=None):
-        positions = self.model.predict(
-            self.inputs,
-            workers=self.n_multiprocessing_workers,
-            use_multiprocessing=True,  # , batch_size=1
-        )
+        positions = self.model.predict(self.inputs)
 
         captured_returns = tf.math.unsorted_segment_mean(
             positions * self.returns, self.time_indices, self.num_time
@@ -147,13 +143,15 @@ class TunerValidationLoss(kt.tuners.RandomSearch):
             **kwargs,
         )
 
-    def run_trial(self, trial, **kwargs):
+    def run_trial(self, trial, *fit_args, **kwargs):
+        # remove unsupported fit kwargs
+        kwargs.pop("use_multiprocessing", None)
+        kwargs.pop("workers", None)
         # set batch size from hyperparameters
         kwargs["batch_size"] = trial.hyperparameters.Choice(
             "batch_size", values=self.hp_minibatch_size
         )
-        print(f"type checking: args_{kwargs} // {type(kwargs)} ")
-        return super().run_trial(trial, **kwargs)
+        return super().run_trial(trial, *fit_args, **kwargs)
 
 
 class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
@@ -186,13 +184,15 @@ class TunerDiversifiedSharpe(kt.tuners.RandomSearch):
             **kwargs,
         )
 
-    def run_trial(self, trial, **kwargs):
+    def run_trial(self, trial, *fit_args, **kwargs):
+        # remove unsupported fit kwargs
+        kwargs.pop("use_multiprocessing", None)
+        kwargs.pop("workers", None)
         # set batch size from hyperparameters
         kwargs["batch_size"] = trial.hyperparameters.Choice(
             "batch_size", values=self.hp_minibatch_size
         )
-        print(f"type checking: args_{kwargs} // {type(kwargs)} ")
-        return super().run_trial(trial, **kwargs)
+        return super().run_trial(trial, *fit_args, **kwargs)
 
 
 class DeepMomentumNetworkModel(ABC):
@@ -282,8 +282,6 @@ class DeepMomentumNetworkModel(ABC):
                 # covered by Tuner class
                 callbacks=callbacks,
                 shuffle=True,
-                use_multiprocessing=True,
-                workers=self.n_multiprocessing_workers,
             )
         else:
             callbacks = [
@@ -309,8 +307,6 @@ class DeepMomentumNetworkModel(ABC):
                 ),
                 callbacks=callbacks,
                 shuffle=True,
-                use_multiprocessing=True,
-                workers=self.n_multiprocessing_workers,
                 # validation_batch_size=1,
             )
 
@@ -348,7 +344,7 @@ class DeepMomentumNetworkModel(ABC):
                     num_val_time,
                     self.early_stopping_patience,
                     self.n_multiprocessing_workers,
-                    weights_save_location=temp_folder,
+                    weights_save_location=os.path.join(temp_folder, "checkpoint.5"),
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ]
@@ -361,10 +357,8 @@ class DeepMomentumNetworkModel(ABC):
                 batch_size=hyperparameters["batch_size"],
                 callbacks=callbacks,
                 shuffle=True,
-                use_multiprocessing=True,
-                workers=self.n_multiprocessing_workers,
             )
-            model.load_weights(temp_folder)
+            model.load_weights(os.path.join(temp_folder, "checkpoint.weights.h5"))
         else:
             callbacks = [
                 tf.keras.callbacks.EarlyStopping(
@@ -389,8 +383,6 @@ class DeepMomentumNetworkModel(ABC):
                 ),
                 callbacks=callbacks,
                 shuffle=True,
-                use_multiprocessing=True,
-                workers=self.n_multiprocessing_workers,
             )
         return model
 
@@ -416,8 +408,6 @@ class DeepMomentumNetworkModel(ABC):
                 x=inputs,
                 y=outputs,
                 sample_weight=active_entries,
-                workers=32,
-                use_multiprocessing=True,
             )
 
             metrics = pd.Series(metric_values, model.metrics_names)
@@ -446,11 +436,7 @@ class DeepMomentumNetworkModel(ABC):
             returns = outputs.flatten()
         mask = (years >= years_geq) & (years < years_lt)
 
-        positions = model.predict(
-            inputs,
-            workers=self.n_multiprocessing_workers,
-            use_multiprocessing=True,  # , batch_size=1
-        )
+        positions = model.predict(inputs)
         if sliding_window:
             positions = positions[:, -1, 0].flatten()
         else:
