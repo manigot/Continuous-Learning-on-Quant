@@ -422,10 +422,11 @@ class DeepMomentumNetworkModel(ABC):
         years_lt=np.iinfo(np.int32).max,
     ):
         inputs, outputs, _, identifier, time = ModelFeatures._unpack(data)
+        
         if sliding_window:
             time = pd.to_datetime(
-                time[:, -1, 0].flatten()
-            )  # TODO to_datetime maybe not needed
+                time[:, -1, 0].flatten(), unit='s'
+            )
             years = time.map(lambda t: t.year)
             identifier = identifier[:, -1, 0].flatten()
             returns = outputs[:, -1, 0].flatten()
@@ -440,9 +441,10 @@ class DeepMomentumNetworkModel(ABC):
         if sliding_window:
             positions = positions[:, -1, 0].flatten()
         else:
-            positions = positions.flatten()
+            positions = positions.flatten()  
 
         captured_returns = returns * positions
+        
         results = pd.DataFrame(
             {
                 "identifier": identifier[mask],
@@ -452,10 +454,11 @@ class DeepMomentumNetworkModel(ABC):
                 "captured_returns": captured_returns[mask],
             }
         )
-
+        
         # don't need to divide sum by n because not storing here
         # mean does not work as well (related to days where no information)
         performance = sharpe_ratio(results.groupby("time")["captured_returns"].sum())
+        print(f"DEBUG #1 || performance: {performance}")
 
         return results, performance
 

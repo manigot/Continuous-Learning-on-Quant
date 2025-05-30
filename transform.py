@@ -35,8 +35,6 @@ dtypes = {
 df = pd.read_csv(f"./datasets/gen15m/ETHUSDT.csv", dtype = dtypes)
 # 컬럼별 min·max 요약
 min_max = df.agg(['min', 'max'])
-print("=== 컬럼별 최소값·최대값 ===")
-print(min_max)
 
 
 """

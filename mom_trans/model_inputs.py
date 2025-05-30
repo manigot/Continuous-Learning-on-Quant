@@ -221,9 +221,6 @@ class ModelFeatures:
                 print("t length ------" + str(len(train)))
                 print("v length ------" + str(len(valid)))
 
-            print("//////////////////")
-            print(train)
-            print("//////////////////")
 
             train = pd.concat(train)
             valid = pd.concat(valid)

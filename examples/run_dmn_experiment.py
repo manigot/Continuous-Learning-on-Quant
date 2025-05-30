@@ -2,7 +2,7 @@ import os
 import argparse
 from settings.hp_grid import HP_MINIBATCH_SIZE
 import pandas as pd
-from settings.default import QUANDL_TICKERS
+from settings.default import BINANCE_SYMBOLS
 from settings.fixed_params import MODLE_PARAMS
 from mom_trans.backtest import run_all_windows
 import numpy as np
@@ -10,7 +10,7 @@ from functools import reduce
 
 # define the asset class of each ticker here - for this example we have not done this
 TEST_MODE = False
-ASSET_CLASS_MAPPING = dict(zip(QUANDL_TICKERS, ["COMB"] * len(QUANDL_TICKERS)))
+ASSET_CLASS_MAPPING = dict(zip(BINANCE_SYMBOLS, ["COMB"] * len(BINANCE_SYMBOLS)))
 TRAIN_VALID_RATIO = 0.90
 TIME_FEATURES = False
 FORCE_OUTPUT_SHARPE_LENGTH = None
@@ -87,12 +87,10 @@ def main(
         PROJECT_NAME = _project_name + str(v)
 
         # TODO test_end += 1
-        print(f"~~~~~~DEBUG of intervals -- train_start: f{train_start}, teset_start: {test_start} end:{test_end}")
         intervals = [
             (train_start, y, y + test_window_size)
             for y in range(test_start, test_end)
         ]
-        print(f"~~~~~~DEBUG of intervals -- intervals:{intervals}")
 
         params = MODLE_PARAMS.copy()
         params["total_time_steps"] = lstm_time_steps

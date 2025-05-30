@@ -391,7 +391,7 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
             #     ],
             #     axis=-1,
             # )
-            print(f"KNOWN!_COMBINED_LAYER: {known_combined_layer.shape}")
+
             historical_inputs = known_combined_layer
 
         def static_combine_and_mask(embedding):

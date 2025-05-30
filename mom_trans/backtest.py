@@ -181,6 +181,7 @@ def save_results(
     """
     asset_classes = ["ALL"]
     results_asset_class = [results_sw]
+    print(f"DEBUG #6 - asset_class_dictionary: {asset_class_dictionary}")
     if asset_class_dictionary:
         results_sw["asset_class"] = results_sw["identifier"].map(
             lambda i: asset_class_dictionary[i]
@@ -190,6 +191,8 @@ def save_results(
             results_asset_class += [results_sw[results_sw["asset_class"] == ac]]
         asset_classes += classes
 
+    print(f"DEBUG -- asset_classes => {asset_classes}")
+    
     metrics = {}
     for ac, results_ac in zip(asset_classes, results_asset_class):
         suffix = _interval_suffix(train_interval)
@@ -209,6 +212,8 @@ def save_results(
             else:
                 results_ac_bps = results_ac
 
+            # TODO Empty DataFrame
+            
             ac_metrics = {
                 **ac_metrics,
                 **calc_performance_metrics(
@@ -229,7 +234,6 @@ def aggregate_and_save_all_windows(
     asset_class_dictionary: Dict[str, str],
     standard_window_size: int,
 ):
-    print(f"D7 ---- aggregaet // experiment_name {experiment_name} ")
 
     """Save a results summary, aggregating all windows
 
@@ -290,6 +294,7 @@ def aggregate_and_save_all_windows(
     )
 
     # 각 asset_class별 집계
+    print(f"DEBUG #7 : asset_classes 종류들 모두: {asset_classes}")
     for asset_class in asset_classes:
         # 빈 리스트로 초기화
         agg = {m: [] for m in metrics + rescaled_metrics}
@@ -299,6 +304,10 @@ def aggregate_and_save_all_windows(
 
         # 해당 자산군의 results DataFrame
         df = all_results[asset_class]
+        print(f"DEBUG #7 : df(results): {df}")
+        print(f"DEBUG #7 : df index???: {df.index}")
+        print(f"DEBUG #7 : asset_class: {asset_class}")
+        
 
         # 윈도우별 통계 수집
         for interval in train_intervals:
@@ -310,14 +319,14 @@ def aggregate_and_save_all_windows(
                 for m in _metrics:
                     for bp in BACKTEST_AVERAGE_BASIS_POINTS:
                         col = m + _interval_suffix(interval, bp)
-                        agg[m + _basis_point_suffix(bp)].append(df.at[asset_class, col])
+                        agg[m + _basis_point_suffix(bp)].append(df.at[col])
 
             # 각 년도별 샤프
             for bp in BACKTEST_AVERAGE_BASIS_POINTS:
                 suf = _basis_point_suffix(bp)
                 for y in range(start_y, end_y):
                     col = f"sharpe_ratio_{y}{suf}"
-                    agg[f"sharpe_ratio_years{suf}"].append(df.at[asset_class, col])
+                    agg[f"sharpe_ratio_years{suf}"].append(df.at[col])
 
         # 캡처드 리턴스 기반 리스케일드 메트릭
         for bp in BACKTEST_AVERAGE_BASIS_POINTS:
@@ -373,7 +382,6 @@ def run_single_window(
     changepoint_lbws: List[int],
     skip_if_completed: bool = True,
     asset_class_dictionary: Dict[str, str] = None,
-    skip_hp_search: bool = False,
     hp_minibatch_size: List[int] = HP_MINIBATCH_SIZE,
 ):
     """Backtest for a single test window
@@ -426,19 +434,6 @@ def run_single_window(
 
     hp_directory = os.path.join(directory, "hp")
 
-    # ------------------------------------------------------------------
-    # If we already have hyper‑parameters from a previous run and the
-    # caller asked to skip the search, load them here and short‑circuit
-    # the Keras‑Tuner phase.
-    # ------------------------------------------------------------------
-    path_best_hp = os.path.join(directory, "best_hyperparameters.json")
-    use_cached_hp = skip_hp_search and os.path.exists(path_best_hp)
-
-    cached_hp: dict | None = None
-    if use_cached_hp:
-        with open(path_best_hp, "r") as fp:
-            cached_hp = json.load(fp)
-
     if params["architecture"] == "LSTM":
         dmn = LstmDeepMomentumNetworkModel(
             experiment_name,
@@ -465,27 +460,9 @@ def run_single_window(
         dmn = None
         raise Exception(f"{params['architecture']} is not a valid architecture.")
 
-    if cached_hp is not None:
-        # ── Re‑build the model with the stored hyper‑parameters ─────────
-        try:
-            best_model = dmn.build_model(cached_hp)   # DMN API
-        except AttributeError:
-            # Fallback for older API versions
-            best_model = dmn._build_model(cached_hp)  # noqa: SLF001
-
-        ckpt_path = os.path.join(directory, "best", "checkpoints",
-                                 "checkpoint.weights.h5")
-        if os.path.exists(ckpt_path):
-            best_model.load_weights(ckpt_path)
-
-        best_hp = cached_hp
-        print("✔  Re‑using previously tuned hyper‑parameters; "
-              "skipping hyper‑parameter search.")
-    else:
-        # ── Run the usual hyper‑parameter search ───────────────────────
-        best_hp, best_model = dmn.hyperparameter_search(
-            model_features.train, model_features.valid
-        )
+    best_hp, best_model = dmn.hyperparameter_search(
+        model_features.train, model_features.valid
+    )
     val_loss = dmn.evaluate(model_features.valid, best_model)
 
     print(f"Best validation loss = {val_loss}")
@@ -509,6 +486,8 @@ def run_single_window(
     print(f"performance (sliding window) = {performance_sw}")
 
     raw_data = raw_data.drop(columns=["Time"])
+
+    results_sw["time"] = results_sw["time"].dt.tz_localize("UTC")
     results_sw = results_sw.merge(
         raw_data.reset_index()[["symbol", "Time", "MVo"]].rename(
             columns={"symbol": "identifier", "Time": "time"}
@@ -609,7 +588,6 @@ def run_all_windows(
         standard_window_size (int, optional): standard number of years in test window. Defaults to 1.
     """
     # run the expanding window
-    print(f"D0 ---- train_intervals: {train_intervals}")
     for interval in train_intervals:
         run_single_window(
             experiment_name,
@@ -617,7 +595,6 @@ def run_all_windows(
             interval,
             params,
             changepoint_lbws,
-            skip_hp_search=True,
             asset_class_dictionary=asset_class_dictionary,
             hp_minibatch_size=hp_minibatch_size,
         )

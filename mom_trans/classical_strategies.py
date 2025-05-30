@@ -29,7 +29,11 @@ def calc_performance_metrics(data: pd.DataFrame, metric_suffix="", num_identifie
     """
     if not num_identifiers:
         num_identifiers = len(data.dropna()["identifier"].unique())
+    
     srs = data.dropna().groupby(level=0)["captured_returns"].sum()/num_identifiers
+    
+    print(f"DEBUGGIN: data => {data}")
+    print(f"DEBUGGIN: srs => {srs}")
     return {
         f"annual_return{metric_suffix}": annual_return(srs),
         f"annual_volatility{metric_suffix}": annual_volatility(srs),
