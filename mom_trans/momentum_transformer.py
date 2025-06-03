@@ -1,6 +1,7 @@
 """Many components in this file are adapted from https://github.com/google-research/google-research/tree/master/tft"""
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras.layers import Lambda, Reshape
 import gc
 import numpy as np
 
@@ -13,7 +14,7 @@ Dense = keras.layers.Dense
 Multiply = keras.layers.Multiply
 Dropout = keras.layers.Dropout
 Activation = keras.layers.Activation
-Lambda = keras.layers.Lambda
+
 
 from mom_trans.deep_momentum_network import DeepMomentumNetworkModel, SharpeLoss
 from settings.hp_grid import (
@@ -193,10 +194,14 @@ def get_decoder_mask(self_attn_inputs):
     Args:
         self_attn_inputs: Inputs to self attention layer to determine mask shape
     """
-    len_s = tf.shape(self_attn_inputs)[-2]
-    bs = tf.shape(self_attn_inputs)[:-2]
-    mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), -2)
-    return mask
+    mask_layer = Lambda(
+        lambda x: tf.cumsum(
+            tf.eye(tf.shape(x)[-2], batch_shape=tf.shape(x)[:-2]),
+            axis=-2
+        ),
+        name="decoder_mask"
+    )
+    return mask_layer(self_attn_inputs)
 
 
 class ScaledDotProductAttention(keras.layers.Layer):
@@ -352,6 +357,9 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
         combined_input_size = self.input_size
         # encoder_steps = self.num_encoder_steps
 
+        print(f"time_steps: {self.time_steps}")
+        print(f"input size: {self.input_size}")
+
         all_inputs = keras.layers.Input(
             shape=(
                 time_steps,
@@ -359,7 +367,7 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
             ),
             name="input",
         )
-
+        
         (
             unknown_inputs,
             known_combined_layer,
@@ -368,20 +376,23 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
         ) = self.get_tft_embeddings(all_inputs)
 
         if unknown_inputs is not None:
-            historical_inputs = concat(
-                [
-                    unknown_inputs,
-                    known_combined_layer,
-                ],
-                axis=-1,
-            )
+                # tf.concat을 Lambda 레이어로 래핑하여 사용
+            historical_inputs = Lambda(
+                lambda x: tf.concat(x, axis=-1),
+                name="historical_concat"
+            )([unknown_inputs, known_combined_layer])
+            print(f"unknown_inputs: {unknown_inputs.shape}")
+            print(f"XXX_COMBINED_LAYER: {unknown_inputs.shape}")
+
         else:
-            historical_inputs = concat(
-                [
-                    known_combined_layer,
-                ],
-                axis=-1,
-            )
+            # historical_inputs = concat(
+            #     [
+            #         known_combined_layer,
+            #     ],
+            #     axis=-1,
+            # )
+
+            historical_inputs = known_combined_layer
 
         def static_combine_and_mask(embedding):
             """Applies variable selection network to static inputs.
@@ -394,12 +405,15 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
             """
 
             # Add temporal features
-            _, num_static, static_dim = embedding.get_shape().as_list()[-3:]
-
-            shape = tf.shape(embedding)
-            flatten = tf.reshape(
-                embedding, tf.concat([shape[:-2], [num_static * static_dim]], axis=-1)
-            )
+            num_static = int(embedding.shape[1])
+            static_dim = int(embedding.shape[2])
+            flatten = Lambda(
+                lambda x: tf.reshape(
+                    x,
+                    tf.concat([tf.shape(x)[:-2], [num_static * static_dim]], axis=-1),
+                ),
+                name="static_flatten",
+            )(embedding)
 
             # Nonlinear transformation with gated residual network.
             mlp_outputs = gated_residual_network(
@@ -434,7 +448,8 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
 
             combined = keras.layers.multiply([sparse_weights, transformed_embedding])
 
-            static_vec = Lambda(K.sum, arguments={"axis": 1})(combined)
+            # static_vec = Lambda(K.sum, arguments={"axis": 1})(combined)
+            static_vec = Lambda(lambda x: K.sum(x, axis=1), name="static_vec_sum")(combined)
 
             return static_vec, sparse_weights
 
@@ -474,16 +489,37 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
             Returns:
                 Processed tensor outputs.
             """
-
+            print(f"WHAY embedding: f{embedding}")
             # Add temporal features
-            time_steps, embedding_dim, num_inputs = embedding.get_shape().as_list()[-3:]
+            time_steps, embedding_dim, num_inputs = embedding.shape[-3:]
 
-            batch_dimensions = tf.shape(embedding)[:-3]
+            print(f"embedding||||: {embedding.shape}")
+
+            batch_dimensions = Lambda(
+                lambda x: tf.shape(x)[:-3],
+                name="lstm_batch_dims"
+            )(embedding)
+
             # new_shape = [-1, time_steps, embedding_dim * num_inputs]
-            new_shape = tf.concat(
-                [batch_dimensions, [time_steps, embedding_dim * num_inputs]], axis=-1
-            )
-            flatten = tf.reshape(embedding, shape=new_shape)
+            # tf.concat 호출을 Lambda 레이어로 래핑
+            # print(f"batch_dimenstions||||: {batch_dimensions}")
+            # new_shape = Lambda(
+            #     lambda x: tf.concat(
+            #         [x, tf.constant([time_steps, embedding_dim * num_inputs])],
+            #         axis=-1
+            #     ),
+            #     #TRACKING
+            #     output_shape=lambda input_shape: input_shape + (2,),
+            #     name="lstm_new_shape"
+            # )(batch_dimensions)
+            # print(f"flnew_shapeatten: {new_shape}")
+
+            # flatten = tf.reshape(embedding, shape=new_shape)
+            # reshape 역시 Lambda로 감싸서 사용
+            flatten = Reshape(
+                (time_steps, embedding_dim * num_inputs),
+                name="lstm_flatten"
+            )(embedding)
 
             if static_inputs is not None:
                 expanded_static_context = Lambda(tf.expand_dims, arguments={"axis": 1})(
@@ -491,7 +527,8 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
                 )
             else:
                 expanded_static_context = None
-
+            
+            print(f"flatten: {flatten}")
             # Variable selection weights
             mlp_outputs, static_gate = gated_residual_network(
                 flatten,
@@ -503,6 +540,7 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
                 return_gate=True,
             )
 
+            print(f"mlp_outputs: {mlp_outputs}")
             sparse_weights = keras.layers.Activation("softmax")(mlp_outputs)
             sparse_weights = Lambda(tf.expand_dims, arguments={"axis": -2})(
                 sparse_weights
@@ -523,11 +561,15 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
                 trans_emb_list
             )
 
+            print(f"WHAY sparse_weight: f{sparse_weights.shape}")
+            print(f"WHAY transformed_embedding: f{transformed_embedding.shape}")
+
             combined = keras.layers.multiply([sparse_weights, transformed_embedding])
+            print(f"WHAY combined: f{combined.shape}")
+
             temporal_ctx = Lambda(K.sum, arguments={"axis": -1})(combined)
 
             return temporal_ctx, sparse_weights, static_gate
-
         input_embeddings, flags, _ = lstm_combine_and_mask(historical_inputs)
 
         # LSTM layer
@@ -629,14 +671,14 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
         self._attention_components = attention_components
 
         adam = keras.optimizers.Adam(
-            lr=self.learning_rate, clipnorm=self.max_gradient_norm
+            learning_rate=self.learning_rate, clipnorm=self.max_gradient_norm
         )
 
         model = keras.Model(inputs=all_inputs, outputs=outputs)
 
         sharpe_loss = SharpeLoss(self.output_size).call
 
-        model.compile(loss=sharpe_loss, optimizer=adam, sample_weight_mode="temporal")
+        model.compile(loss=sharpe_loss, optimizer=adam)
 
         self._input_placeholder = all_inputs
 
@@ -654,6 +696,7 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
         Returns:
           Tensors for transformed inputs.
         """
+        print(f"get_tft_embedding ___ f{all_inputs.shape}")
 
         time_steps = self.time_steps
 
@@ -665,10 +708,10 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
         #     if i in self._static_input_loc:
         #         raise ValueError("Observation cannot be static!")
 
-        if all_inputs.get_shape().as_list()[-1] != self.input_size:
+        if all_inputs.shape[-1] != self.input_size:
             raise ValueError(
                 "Illegal number of inputs! Inputs observed={}, expected={}".format(
-                    all_inputs.get_shape().as_list()[-1], self.input_size
+                    all_inputs.shape[-1], self.input_size
                 )
             )
 
@@ -718,7 +761,11 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
                 for i in range(num_categorical_variables)
                 if i + num_regular_variables in self._static_input_loc
             ]
-            static_inputs = keras.backend.stack(static_inputs, axis=1)
+            # static_inputs = keras.backend.stack(static_inputs, axis=1)
+            static_inputs = Lambda(
+                lambda *args: tf.stack(args, axis=1),
+                name="stack_static_inputs"
+            )(*static_inputs)
 
         else:
             static_inputs = None
@@ -758,9 +805,13 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
                 unknown_inputs.append(e)
 
         if unknown_inputs + wired_embeddings:
-            unknown_inputs = keras.backend.stack(
-                unknown_inputs + wired_embeddings, axis=-1
-            )
+            # unknown_inputs = keras.backend.stack(
+            #     unknown_inputs + wired_embeddings, axis=-1
+            # )
+            unknown_inputs = Lambda(
+                lambda *args: tf.stack(args, axis=-1),
+                name="stack_unknown_wired"
+            )(* (unknown_inputs + wired_embeddings))
         else:
             unknown_inputs = None
 
@@ -776,9 +827,14 @@ class TftDeepMomentumNetworkModel(DeepMomentumNetworkModel):
             if i + num_regular_variables not in self._static_input_loc
         ]
 
-        known_combined_layer = keras.backend.stack(
-            known_regular_inputs + known_categorical_inputs, axis=-1
-        )
+        # known_combined_layer = keras.backend.stack(
+        #     known_regular_inputs + known_categorical_inputs, axis=-1
+        # )
+
+        known_combined_layer = Lambda(
+            lambda x: tf.stack(x, axis=-1),
+            name="stack_known_inputs"
+        )(known_regular_inputs + known_categorical_inputs)
 
         return unknown_inputs, known_combined_layer, static_inputs
     

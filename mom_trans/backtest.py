@@ -19,7 +19,6 @@ from mom_trans.classical_strategies import (
     calc_performance_metrics_subset,
     calc_sharpe_by_year,
     calc_net_returns,
-    annual_volatility,
 )
 
 from settings.default import BACKTEST_AVERAGE_BASIS_POINTS
@@ -182,6 +181,7 @@ def save_results(
     """
     asset_classes = ["ALL"]
     results_asset_class = [results_sw]
+    print(f"DEBUG #6 - asset_class_dictionary: {asset_class_dictionary}")
     if asset_class_dictionary:
         results_sw["asset_class"] = results_sw["identifier"].map(
             lambda i: asset_class_dictionary[i]
@@ -191,6 +191,8 @@ def save_results(
             results_asset_class += [results_sw[results_sw["asset_class"] == ac]]
         asset_classes += classes
 
+    print(f"DEBUG -- asset_classes => {asset_classes}")
+    
     metrics = {}
     for ac, results_ac in zip(asset_classes, results_asset_class):
         suffix = _interval_suffix(train_interval)
@@ -210,6 +212,8 @@ def save_results(
             else:
                 results_ac_bps = results_ac
 
+            # TODO Empty DataFrame
+            
             ac_metrics = {
                 **ac_metrics,
                 **calc_performance_metrics(
@@ -224,24 +228,28 @@ def save_results(
     with open(os.path.join(output_directory, "results.json"), "w") as file:
         file.write(json.dumps(metrics, indent=4))
 
-
 def aggregate_and_save_all_windows(
     experiment_name: str,
     train_intervals: List[Tuple[int, int, int]],
     asset_class_dictionary: Dict[str, str],
     standard_window_size: int,
 ):
+
     """Save a results summary, aggregating all windows
 
     Args:
         experiment_name (str): experiment name
-        train_intervals (List[Tuple[int, int, int]]): list of train/test intervals
+        train_intervals (List[Tuple[int, int, int]]): list of (id, start_year, end_year)
         asset_class_dictionary (Dict[str, str]): map tickers to asset class
         standard_window_size (int): number of years in standard window
     """
     directory = _get_directory_name(experiment_name)
+    os.makedirs(directory, exist_ok=True)
+
+    # 모든 윈도우에서 생성된 results.json 누적
     all_results = _results_from_all_windows(experiment_name, train_intervals)
 
+    # 기본 지표들
     _metrics = [
         "annual_return",
         "annual_volatility",
@@ -260,103 +268,110 @@ def aggregate_and_save_all_windows(
         "max_drawdown_rescaled",
     ]
 
+    # 백테스트 BP suffix 적용된 전체 지표 리스트
     metrics = []
     rescaled_metrics = []
     for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-        suffix = _basis_point_suffix(bp)
-        metrics += list(map(lambda m: m + suffix, _metrics))
-        rescaled_metrics += list(map(lambda m: m + suffix, _rescaled_metrics))
+        suf = _basis_point_suffix(bp)
+        metrics += [m + suf for m in _metrics]
+        rescaled_metrics += [m + suf for m in _rescaled_metrics]
 
+    # 자산군 리스트 (ALL + 개별)
     if asset_class_dictionary:
         asset_classes = ["ALL"] + _get_asset_classes(asset_class_dictionary)
     else:
         asset_classes = ["ALL"]
 
-    average_metrics = {}
-    list_metrics = {}
+    average_metrics: Dict[str, Dict[str, float]] = {}
+    list_metrics: Dict[str, Dict[str, List[float]]] = {}
 
+    # ticker→asset_class DataFrame
     asset_class_tickers = (
-        pd.DataFrame.from_dict(asset_class_dictionary, orient="index")
+        pd.DataFrame.from_dict(asset_class_dictionary, orient="index", columns=["asset"])
         .reset_index()
-        .set_index(0)
+        .rename(columns={"index": "symbol"})
+        .set_index("asset")
     )
 
+    # 각 asset_class별 집계
+    print(f"DEBUG #7 : asset_classes 종류들 모두: {asset_classes}")
     for asset_class in asset_classes:
-        average_results = dict(
-            zip(
-                metrics + rescaled_metrics,
-                [[] for _ in range(len(metrics + rescaled_metrics))],
-            )
-        )
-        asset_results = all_results[asset_class]
-
+        # 빈 리스트로 초기화
+        agg = {m: [] for m in metrics + rescaled_metrics}
+        # 년도별 샤프 비율
         for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-            suffix = _basis_point_suffix(bp)
-            average_results[f"sharpe_ratio_years{suffix}"] = []
-        # average_results["sharpe_ratio_years_std"] = 0.0
+            agg[f"sharpe_ratio_years{_basis_point_suffix(bp)}"] = []
 
+        # 해당 자산군의 results DataFrame
+        df = all_results[asset_class]
+        print(f"DEBUG #7 : df(results): {df}")
+        print(f"DEBUG #7 : df index???: {df.index}")
+        print(f"DEBUG #7 : asset_class: {asset_class}")
+        
+
+        # 윈도우별 통계 수집
         for interval in train_intervals:
-            # only want full windows here
-            if interval[2] - interval[1] == standard_window_size:
+            start_y, end_y = interval[1], interval[2]
+            is_standard = (end_y - start_y) == standard_window_size
+
+            # full window metrics
+            if is_standard:
                 for m in _metrics:
                     for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-                        suffix = _interval_suffix(interval, bp)
-                        average_results[m + _basis_point_suffix(bp)].append(
-                            asset_results[m + suffix]
-                        )
+                        col = m + _interval_suffix(interval, bp)
+                        agg[m + _basis_point_suffix(bp)].append(df.at[col])
 
+            # 각 년도별 샤프
             for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-                suffix = _basis_point_suffix(bp)
-                for year in range(interval[1], interval[2]):
-                    average_results["sharpe_ratio_years" + suffix].append(
-                        asset_results[f"sharpe_ratio_{int(year)}{suffix}"]
-                    )
+                suf = _basis_point_suffix(bp)
+                for y in range(start_y, end_y):
+                    col = f"sharpe_ratio_{y}{suf}"
+                    agg[f"sharpe_ratio_years{suf}"].append(df.at[col])
+
+        # 캡처드 리턴스 기반 리스케일드 메트릭
         for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-            suffix = _basis_point_suffix(bp)
-            all_captured_returns = _captured_returns_from_all_windows(
+            suf = _basis_point_suffix(bp)
+            captured = _captured_returns_from_all_windows(
                 experiment_name,
                 train_intervals,
                 volatility_rescaling=True,
                 only_standard_windows=True,
-                volatilites_known=average_results["annual_volatility" + suffix],
+                volatilites_known=agg["annual_volatility" + suf],
                 filter_identifiers=(
                     None
                     if asset_class == "ALL"
-                    else asset_class_tickers.loc[
-                        asset_class, asset_class_tickers.columns[0]
-                    ].tolist()
+                    else asset_class_tickers.loc[asset_class]["symbol"].tolist()
                 ),
-                captured_returns_col=f"captured_returns{suffix}",
+                captured_returns_col=f"captured_returns{suf}",
             )
-            yrs = pd.to_datetime(all_captured_returns.index).year
+            years = pd.to_datetime(captured.index).year
             for interval in train_intervals:
-                if interval[2] - interval[1] == standard_window_size:
-                    srs = all_captured_returns[
-                        (yrs >= interval[1]) & (yrs < interval[2])
-                    ]
-                    rescaled_dict = calc_performance_metrics_subset(
-                        srs, f"_rescaled{suffix}"
-                    )
+                if (interval[2] - interval[1]) == standard_window_size:
+                    sub = captured[(years >= interval[1]) & (years < interval[2])]
+                    res = calc_performance_metrics_subset(sub, f"_rescaled{suf}")
                     for m in _rescaled_metrics:
-                        average_results[m + suffix].append(rescaled_dict[m + suffix])
+                        agg[m + suf].append(res[m + suf])
 
-        window_history = copy.deepcopy(average_results)
-        for key in average_results:
-            average_results[key] = np.mean(average_results[key])
-
+        # 평균 및 표준편차 계산
+        history = copy.deepcopy(agg)
+        stats = {k: float(np.mean(v)) for k, v in agg.items()}
         for bp in BACKTEST_AVERAGE_BASIS_POINTS:
-            suffix = _basis_point_suffix(bp)
-            average_results[f"sharpe_ratio_years_std{suffix}"] = np.std(
-                window_history[f"sharpe_ratio_years{suffix}"]
+            suf = _basis_point_suffix(bp)
+            stats[f"sharpe_ratio_years_std{suf}"] = float(
+                np.std(history[f"sharpe_ratio_years{suf}"])
             )
 
-        average_metrics = {**average_metrics, asset_class: average_results}
-        list_metrics = {**list_metrics, asset_class: window_history}
+        average_metrics[asset_class] = stats
+        list_metrics[asset_class] = {k: v for k, v in history.items()}
 
-    with open(os.path.join(directory, "average_results.json"), "w") as file:
-        file.write(json.dumps(average_metrics, indent=4))
-    with open(os.path.join(directory, "list_results.json"), "w") as file:
-        file.write(json.dumps(list_metrics, indent=4))
+    # JSON으로 저장
+    with open(os.path.join(directory, "average_results.json"), "w") as fp:
+        json.dump(average_metrics, fp, indent=4)
+    with open(os.path.join(directory, "list_results.json"), "w") as fp:
+        json.dump(list_metrics, fp, indent=4)
+
+    print(f">>> Aggregated results saved in {directory}")
+
 
 
 def run_single_window(
@@ -393,7 +408,13 @@ def run_single_window(
         return
 
     raw_data = pd.read_csv(features_file_path, index_col=0, parse_dates=True)
-    raw_data["date"] = raw_data["date"].astype("datetime64[ns]")
+    if "Time" not in raw_data.columns:
+        print("NO TIME INSIDE")
+        raw_data['Time'] = raw_data.index
+
+    # Time 컬럼에서 Timezone을 제거하고, Unix timestamp (초 단위)로 변환
+    raw_data["Time"] = raw_data["Time"].dt.tz_localize(None).astype('int64') // 10**9
+
 
     # TODO more/less than the one year test buffer
     model_features = ModelFeatures(
@@ -464,9 +485,12 @@ def run_single_window(
     )
     print(f"performance (sliding window) = {performance_sw}")
 
+    raw_data = raw_data.drop(columns=["Time"])
+
+    results_sw["time"] = results_sw["time"].dt.tz_localize("UTC")
     results_sw = results_sw.merge(
-        raw_data.reset_index()[["ticker", "date", "daily_vol"]].rename(
-            columns={"ticker": "identifier", "date": "time"}
+        raw_data.reset_index()[["symbol", "Time", "MVo"]].rename(
+            columns={"symbol": "identifier", "Time": "time"}
         ),
         on=["identifier", "time"],
     )
@@ -485,8 +509,8 @@ def run_single_window(
     )
     print(f"performance (fixed window) = {performance_fw}")
     results_fw = results_fw.merge(
-        raw_data.reset_index()[["ticker", "date", "daily_vol"]].rename(
-            columns={"ticker": "identifier", "date": "time"}
+        raw_data.reset_index()[["symbol", "Time", "MVo"]].rename(
+            columns={"symbol": "identifier", "Time": "time"}
         ),
         on=["identifier", "time"],
     )
@@ -514,10 +538,9 @@ def run_single_window(
 
     # save model and get rid of the hp dir
     best_directory = os.path.join(directory, "best")
-    best_model.save_weights(os.path.join(best_directory, "checkpoints", "checkpoint"))
+    best_model.save_weights(os.path.join(best_directory, "checkpoints", "checkpoint.weights.h5"))
     with open(os.path.join(best_directory, "hyperparameters.json"), "w") as file:
         file.write(json.dumps(best_hp, indent=4))
-    shutil.rmtree(hp_directory)
 
     save_results(
         results_sw,
@@ -551,6 +574,7 @@ def run_all_windows(
     hp_minibatch_size=HP_MINIBATCH_SIZE,
     standard_window_size=1,
 ):
+    print(f"RUN_ALL_WINDOWS \n {experiment_name} \n {features_file_path}")
     """Run experiment for multiple test intervals and aggregate results
 
     Args:
@@ -631,7 +655,7 @@ def run_classical_methods(
         )
         returns_data = raw_data.merge(
             reference[["time", "identifier", "returns"]],
-            left_on=["date", "ticker"],
+            left_on=["Time", "symbol"],
             right_on=["time", "identifier"],
         )
         returns_data["position"] = intermediate_momentum_position(0, returns_data)

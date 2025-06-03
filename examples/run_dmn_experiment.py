@@ -2,7 +2,7 @@ import os
 import argparse
 from settings.hp_grid import HP_MINIBATCH_SIZE
 import pandas as pd
-from settings.default import QUANDL_TICKERS
+from settings.default import BINANCE_SYMBOLS
 from settings.fixed_params import MODLE_PARAMS
 from mom_trans.backtest import run_all_windows
 import numpy as np
@@ -10,12 +10,12 @@ from functools import reduce
 
 # define the asset class of each ticker here - for this example we have not done this
 TEST_MODE = False
-ASSET_CLASS_MAPPING = dict(zip(QUANDL_TICKERS, ["COMB"] * len(QUANDL_TICKERS)))
+ASSET_CLASS_MAPPING = dict(zip(BINANCE_SYMBOLS, ["COMB"] * len(BINANCE_SYMBOLS)))
 TRAIN_VALID_RATIO = 0.90
 TIME_FEATURES = False
 FORCE_OUTPUT_SHARPE_LENGTH = None
 EVALUATE_DIVERSIFIED_VAL_SHARPE = True
-NAME = "experiment_quandl_100assets"
+NAME = "experiment_binance_100assets"
 
 
 def main(
@@ -58,6 +58,10 @@ def main(
         architecture = "TFT"
         lstm_time_steps = 63
         changepoint_lbws = [63]
+    elif experiment == "btc_15m":
+        architecture = "TFT" 
+        lstm_time_steps = 63 
+        changepoint_lbws = None
     else:
         raise BaseException("Invalid experiment.")
 
@@ -82,9 +86,10 @@ def main(
     for v in versions:
         PROJECT_NAME = _project_name + str(v)
 
+        # TODO test_end += 1
         intervals = [
             (train_start, y, y + test_window_size)
-            for y in range(test_start, test_end - 1)
+            for y in range(test_start, test_end)
         ]
 
         params = MODLE_PARAMS.copy()
@@ -102,12 +107,12 @@ def main(
         if changepoint_lbws:
             features_file_path = os.path.join(
                 "data",
-                f"quandl_cpd_{np.max(changepoint_lbws)}lbw.csv",
+                f"binance_cpd_{np.max(changepoint_lbws)}lbw.csv",
             )
         else:
             features_file_path = os.path.join(
                 "data",
-                "quandl_cpd_nonelbw.csv",
+                "binance_cpd_nonelbw.csv",
             )
 
         run_all_windows(
@@ -143,6 +148,7 @@ if __name__ == "__main__":
                 "TFT-SHORT",
                 "TFT-SHORT-CPD-21",
                 "TFT-SHORT-CPD-63",
+                "btc_15m"
             ],
             help="Input folder for CPD outputs.",
         )
@@ -151,7 +157,7 @@ if __name__ == "__main__":
             metavar="s",
             type=int,
             nargs="?",
-            default=1990,
+            default=2018,
             help="Training start year",
         )
         parser.add_argument(
@@ -159,7 +165,7 @@ if __name__ == "__main__":
             metavar="t",
             type=int,
             nargs="?",
-            default=2016,
+            default=2022,
             help="Training end year and test start year.",
         )
         parser.add_argument(
@@ -167,7 +173,7 @@ if __name__ == "__main__":
             metavar="e",
             type=int,
             nargs="?",
-            default=2022,
+            default=2023,
             help="Testing end year.",
         )
         parser.add_argument(
