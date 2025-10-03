@@ -7,9 +7,6 @@ dtypes = {
     'Hgh':  np.float32,
     'Low':  np.float32,
     'Cls':  np.float32,
-    'Vol':  np.float32,
-    'NoT':  np.int32,
-    'TBV':  np.float32,
 }
 
 # coin = ["BTCUSDT", "ETHUSDT"]

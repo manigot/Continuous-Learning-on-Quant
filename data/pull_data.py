@@ -31,14 +31,11 @@ def pull_binance_sample_data_ft(symbol: str) -> pd.DataFrame:
         'Low':  np.float32,
         'Cls':  np.float32,
         'Vol':  np.float32,
-        'NoT':  np.int32,
-        'TBV':  np.float32,
-        'Ret': np.float32
     }
 
     path = os.path.join("datasets", "gen15m", f"{symbol}.csv")
     df = pd.read_csv(path, dtype = dtypes)
-    df['Time'] = pd.to_datetime(df['Time'], unit='s', utc=True)
+    df['Time'] = pd.to_datetime(df['Time'], utc=True)
     df = df.set_index('Time')
 
     return df
